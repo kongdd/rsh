@@ -1,6 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 use anyhow::{bail, Result};
-use tokio::{io::BufReader, net::{TcpListener, TcpStream}, sync::{mpsc, oneshot, Mutex}};
+use tokio::{
+    io::BufReader,
+    net::{TcpListener, TcpStream},
+    sync::{mpsc, oneshot, Mutex},
+    time::{interval, timeout, Duration},
+};
 
 use crate::proto::{recv, send, Msg};
 
@@ -62,10 +67,22 @@ async fn agent(
     peers.lock().await.insert(name.clone(), tx.clone());
     eprintln!("{name} online");
 
-    while let Some(job) = rx.recv().await {
-        if send(&mut w, &Msg::Run { cmd: job.cmd }).await.is_err() { break }
-        let msg = recv(&mut r).await?.unwrap_or_else(|| Msg::Error("target disconnected".into()));
-        let _ = job.tx.send(msg);
+    let mut tick = interval(Duration::from_secs(10));
+    loop {
+        tokio::select! {
+            Some(job) = rx.recv() => {
+                if send(&mut w, &Msg::Run { cmd: job.cmd }).await.is_err() { break }
+                let msg = recv(&mut r).await?.unwrap_or_else(|| Msg::Error("target disconnected".into()));
+                let _ = job.tx.send(msg);
+            }
+            _ = tick.tick() => {
+                if send(&mut w, &Msg::Ping).await.is_err() { break }
+                match timeout(Duration::from_secs(5), recv(&mut r)).await {
+                    Ok(Ok(Some(Msg::Pong))) => {}
+                    _ => break,
+                }
+            }
+        }
     }
 
     let mut p = peers.lock().await;

@@ -11,7 +11,8 @@ pub enum Msg {
     Result { code: i32, out: String, err: String },
     List,
     Devices(Vec<String>),
-    Ok,
+    Ping,
+    Pong,
     Error(String),
 }
 

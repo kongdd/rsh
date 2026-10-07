@@ -31,9 +31,11 @@ async fn session(stream: TcpStream, name: &str, token: &str) -> Result<()> {
     send(&mut w, &Msg::Register { name: name.into() }).await?;
 
     while let Some(msg) = recv(&mut r).await? {
-        let Msg::Run { cmd } = msg else { bail!("invalid server message") };
-        let out = shell(&cmd).await?;
-        send(&mut w, &out).await?;
+        match msg {
+            Msg::Ping => send(&mut w, &Msg::Pong).await?,
+            Msg::Run { cmd } => send(&mut w, &shell(&cmd).await?).await?,
+            _ => bail!("invalid server message"),
+        }
     }
     bail!("server closed connection")
 }
