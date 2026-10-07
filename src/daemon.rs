@@ -1,19 +1,30 @@
 use anyhow::{bail, Result};
-use tokio::{io::BufReader, net::TcpStream, process::Command, time::{sleep, Duration}};
+use tokio::{
+    io::{split, BufReader},
+    process::Command,
+    time::{sleep, timeout, Duration},
+};
 
-use crate::proto::{recv, send, Msg};
+use crate::{
+    proto::{recv, send, Msg, Role},
+    tls,
+};
 
-pub async fn run(name: &str) {
+pub async fn run(name: Option<&str>) -> Result<()> {
+    let name = match name {
+        Some(name) => name.to_string(),
+        None => hostname::get()?.to_string_lossy().into_owned(),
+    };
     let addr = std::env::var("RSH_SERVER").unwrap_or_else(|_| "127.0.0.1:7280".into());
-    let token = std::env::var("RSH_TOKEN").expect("RSH_TOKEN is required");
+    let token = std::env::var("RSH_DAEMON_TOKEN")?;
     let mut delay = 1;
 
     loop {
-        match TcpStream::connect(&addr).await {
+        match tls::connect(&addr).await {
             Ok(stream) => {
                 delay = 1;
                 eprintln!("connected as {name}");
-                if let Err(e) = session(stream, name, &token).await {
+                if let Err(e) = session(stream, &name, &token).await {
                     eprintln!("disconnected: {e}");
                 }
             }
@@ -24,31 +35,53 @@ pub async fn run(name: &str) {
     }
 }
 
-async fn session(stream: TcpStream, name: &str, token: &str) -> Result<()> {
-    let (r, mut w) = stream.into_split();
+async fn session(stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream>, name: &str, token: &str) -> Result<()> {
+    let (r, mut w) = split(stream);
     let mut r = BufReader::new(r);
-    send(&mut w, &Msg::Auth { token: token.into() }).await?;
+    send(&mut w, &Msg::Auth { token: token.into(), role: Role::Daemon }).await?;
     send(&mut w, &Msg::Register { name: name.into() }).await?;
+
+    match recv(&mut r).await? {
+        Some(Msg::Ok) => {}
+        Some(Msg::Error(e)) => bail!(e),
+        _ => bail!("registration failed"),
+    }
 
     while let Some(msg) = recv(&mut r).await? {
         match msg {
             Msg::Ping => send(&mut w, &Msg::Pong).await?,
-            Msg::Run { cmd } => send(&mut w, &shell(&cmd).await?).await?,
+            Msg::Run { cmd } => send(&mut w, &shell(&cmd).await).await?,
             _ => bail!("invalid server message"),
         }
     }
     bail!("server closed connection")
 }
 
-async fn shell(cmd: &str) -> Result<Msg> {
+async fn shell(cmd: &str) -> Msg {
     #[cfg(windows)]
-    let out = Command::new("cmd").args(["/C", cmd]).output().await?;
+    let mut child = {
+        let mut c = Command::new("cmd");
+        c.args(["/C", cmd]);
+        c
+    };
     #[cfg(not(windows))]
-    let out = Command::new("sh").args(["-lc", cmd]).output().await?;
+    let mut child = {
+        let mut c = Command::new("sh");
+        c.args(["-lc", cmd]);
+        c
+    };
 
-    Ok(Msg::Result {
-        code: out.status.code().unwrap_or(-1),
-        out: String::from_utf8_lossy(&out.stdout).into(),
-        err: String::from_utf8_lossy(&out.stderr).into(),
-    })
+    child.kill_on_drop(true);
+    let secs = std::env::var("RSH_COMMAND_TIMEOUT").ok()
+        .and_then(|v| v.parse().ok()).unwrap_or(3600);
+
+    match timeout(Duration::from_secs(secs), child.output()).await {
+        Ok(Ok(out)) => Msg::Result {
+            code: out.status.code().unwrap_or(-1),
+            out: String::from_utf8_lossy(&out.stdout).into(),
+            err: String::from_utf8_lossy(&out.stderr).into(),
+        },
+        Ok(Err(e)) => Msg::Error(format!("exec failed: {e}")),
+        Err(_) => Msg::Result { code: 124, out: String::new(), err: "command timed out\n".into() },
+    }
 }

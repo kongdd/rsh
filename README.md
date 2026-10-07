@@ -1,36 +1,48 @@
 # rsh
 
-Tiny remote command runner through one public relay server.
+Tiny TLS-protected remote command runner through one public relay server.
+
+## Usage
+
+Server:
 
 ```bash
-# public server
-export RSH_TOKEN='change-me'
+export RSH_CERT=/etc/letsencrypt/live/rsh.example.com/fullchain.pem
+export RSH_KEY=/etc/letsencrypt/live/rsh.example.com/privkey.pem
+export RSH_DAEMON_TOKEN='random-daemon-secret'
+export RSH_CONTROL_TOKEN='different-control-secret'
 rsh server
+```
 
-# each machine
-export RSH_SERVER='server.example.com:7280'
-export RSH_TOKEN='change-me'
-rsh daemon --name mac
+Each machine:
 
-# anywhere
+```bash
+export RSH_SERVER='rsh.example.com:7280'
+export RSH_DAEMON_TOKEN='random-daemon-secret'
+rsh daemon                 # uses hostname
+rsh daemon --name mac      # optional override
+```
+
+Controller:
+
+```bash
+export RSH_SERVER='rsh.example.com:7280'
+export RSH_CONTROL_TOKEN='different-control-secret'
 rsh ls
 rsh mac "uname -a"
 ```
 
-## Reconnect
+The client verifies the server certificate against the Mozilla root store. For a private CA, set `RSH_CA=/path/to/ca.pem`. If the dial address differs from the certificate name, set `RSH_SERVER_NAME=rsh.example.com`.
 
-`daemon` reconnects automatically after network loss with exponential backoff:
+## Safety
 
-`1s -> 2s -> 4s -> ... -> 30s`
+- TLS encrypts tokens, commands and output and verifies the server identity.
+- Daemon and controller tokens are separate, limiting lateral movement if one daemon is compromised.
+- Duplicate online device names are rejected instead of silently replaced.
+- TLS/auth handshakes time out after 5 seconds.
+- Commands are limited to 64 KiB; protocol messages to 8 MiB.
+- Commands time out after 3600 seconds by default; override with `RSH_COMMAND_TIMEOUT`.
+- Daemons reconnect with exponential backoff: `1s -> 2s -> 4s -> ... -> 30s`.
+- The server removes disconnected nodes; reconnecting daemons register again.
 
-A successful connection resets the delay to 1 second. The server only keeps online nodes; a reconnected daemon simply registers again.
-
-## Environment
-
-- `RSH_TOKEN`: required shared token
-- `RSH_SERVER`: server address, default `127.0.0.1:7280`
-- `RSH_BIND`: server bind address, default `0.0.0.0:7280`
-
-## Status
-
-MVP only. Transport is plain TCP; the token and command payload are **not encrypted**. Do not expose it to an untrusted network yet. TLS/E2E encryption should be added before production use.
+There is intentionally no database, web UI, account system or P2P layer.
