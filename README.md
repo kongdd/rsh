@@ -1,5 +1,8 @@
 # rsh
 
+[![ci](https://github.com/kongdd/rsh/actions/workflows/ci.yml/badge.svg)](https://github.com/kongdd/rsh/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/kongdd/rsh/graph/badge.svg)](https://codecov.io/gh/kongdd/rsh)
+
 Tiny TLS-protected remote command runner through one public relay server.
 
 ## Usage
