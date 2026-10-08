@@ -28,6 +28,7 @@ jobs:
           sed -i "s|$PWD/||" lcov.info
       - uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           use_oidc: true
           files: lcov.info
           disable_file_fixes: true
