@@ -23,9 +23,13 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --lcov --output-path lcov.info
+      - run: |
+          cargo llvm-cov --lcov --output-path lcov.info
+          sed -i "s|$PWD/||" lcov.info
       - uses: codecov/codecov-action@v5
         with:
           use_oidc: true
           files: lcov.info
+          disable_file_fixes: true
+          use_legacy_upload_endpoint: true
           fail_ci_if_error: true
